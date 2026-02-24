@@ -1,14 +1,6 @@
-<<<<<<< HEAD
 # PaGos Parser: Полный Пайплайн
-=======
-# PaGos Parser: полный pipeline (RU)
->>>>>>> 13d3ebf (Add stage5 to pipeline and expand README documentation)
-
 Проект собирает документы по законопроектам Госдумы, извлекает тексты входной и итоговой редакций, считает семантическую дистанцию между версиями и обогащает результат метаданными карточки.
-
-<<<<<<< HEAD
 ## Архитектура по стадиям
-=======
 ## Что делает pipeline
 
 1. `stage1` — собирает ссылки на карточки законопроектов (`bill_id`, `bill_url`) в `artifacts/urls.csv`.
@@ -18,8 +10,6 @@
 5. `stage5` — обогащает итог метаданными карточки и сохраняет `artifacts/final_result_enriched.xlsx`.
 
 ## Артефакты
->>>>>>> 13d3ebf (Add stage5 to pipeline and expand README documentation)
-
 - `artifacts/urls.csv`
 - `artifacts/documents.csv`
 - `artifacts/texts.jsonl`
