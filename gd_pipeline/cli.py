@@ -35,9 +35,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser_stage3 = subparsers.add_parser("stage3", help="Download documents and extract texts to texts.jsonl")
     add_common_args(parser_stage3)
+    parser_stage3.add_argument("--download-concurrency", type=int, default=6)
+    parser_stage3.add_argument("--extract-processes", type=int, default=4)
+    parser_stage3.add_argument("--http-timeout-seconds", type=int, default=90)
+    parser_stage3.add_argument("--http-retries", type=int, default=3)
+    parser_stage3.add_argument("--warm-bill-pages", action="store_true")
 
     parser_stage4 = subparsers.add_parser("stage4", help="Compute embeddings and cosine distance into Excel")
     add_common_args(parser_stage4)
+
+    parser_clean_texts = subparsers.add_parser(
+        "clean-texts",
+        help="Remove poisoned text payloads from texts.jsonl so stage3 can rebuild them",
+    )
+    add_common_args(parser_clean_texts)
+    parser_clean_texts.add_argument("--no-backup", action="store_true")
 
     parser_all = subparsers.add_parser("all", help="Run all stages sequentially")
     add_common_args(parser_all)
@@ -45,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser_all.add_argument("--end-page", type=int, default=24)
     parser_all.add_argument("--workers", type=int, default=18)
     parser_all.add_argument("--headful", action="store_true", help="Run browser with UI")
+    parser_all.add_argument("--download-concurrency", type=int, default=6)
+    parser_all.add_argument("--extract-processes", type=int, default=4)
+    parser_all.add_argument("--http-timeout-seconds", type=int, default=90)
+    parser_all.add_argument("--http-retries", type=int, default=3)
+    parser_all.add_argument("--warm-bill-pages", action="store_true")
 
     return parser
 
@@ -73,6 +90,13 @@ def main() -> None:
         config.start_page = int(args.start_page)
         config.end_page = int(args.end_page)
 
+    if args.command in {"stage3", "all"}:
+        config.stage3_download_concurrency = max(1, int(args.download_concurrency))
+        config.stage3_extract_processes = max(1, int(args.extract_processes))
+        config.stage3_http_timeout_seconds = max(30, int(args.http_timeout_seconds))
+        config.stage3_http_retries = max(1, int(args.http_retries))
+        config.stage3_warm_bill_pages = bool(args.warm_bill_pages)
+
     if args.command == "stage1":
         Stage1URLCollector = _safe_import("gd_pipeline.stage1_collect_urls", "Stage1URLCollector")
 
@@ -100,6 +124,21 @@ def main() -> None:
         Stage4EmbeddingScorer = _safe_import("gd_pipeline.stage4_embeddings", "Stage4EmbeddingScorer")
 
         Stage4EmbeddingScorer(config).run()
+        return
+
+    if args.command == "clean-texts":
+        clean_texts_jsonl_file = _safe_import("gd_pipeline.clean_texts_jsonl", "clean_texts_jsonl_file")
+        stats = clean_texts_jsonl_file(path=config.texts_jsonl, make_backup=not bool(args.no_backup))
+        LOGGER.info(
+            "clean-texts completed: rows_read=%s unique_bills=%s written_records=%s dropped_side_a=%s dropped_side_b=%s dropped_records=%s malformed=%s",
+            stats["rows_read"],
+            stats["unique_bills"],
+            stats["written_records"],
+            stats["dropped_side_a"],
+            stats["dropped_side_b"],
+            stats["dropped_records"],
+            stats["malformed"],
+        )
         return
 
     if args.command == "all":

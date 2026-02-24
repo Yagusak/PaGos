@@ -20,9 +20,11 @@ class PipelineConfig:
     stage2_navigation_timeout_ms: int = 45_000
     stage2_max_retries: int = 2
 
-    stage3_download_concurrency: int = 10
+    stage3_download_concurrency: int = 6
     stage3_http_timeout_seconds: int = 90
     stage3_http_retries: int = 3
+    stage3_warm_bill_pages: bool = False
+    stage3_extract_processes: int = 4
 
     embedding_model_name: str = "cointegrated/rubert-tiny2"
     embedding_batch_size: int = 64

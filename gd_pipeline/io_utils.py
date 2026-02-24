@@ -5,11 +5,25 @@ import json
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator
 
+from filelock import FileLock
+
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _jsonl_lock_path(path: Path) -> Path:
+    return Path(str(path) + ".lock")
+
+
+@contextmanager
+def jsonl_file_lock(path: Path):
+    lock = FileLock(str(_jsonl_lock_path(Path(path))))
+    with lock:
+        yield
 
 
 def append_csv_row(path: Path, fieldnames: Iterable[str], row: Dict[str, Any]) -> None:
@@ -51,10 +65,11 @@ def append_jsonl_record(path: Path, record: Dict[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False)
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(line + "\n")
-        fp.flush()
-        os.fsync(fp.fileno())
+    with jsonl_file_lock(path):
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(line + "\n")
+            fp.flush()
+            os.fsync(fp.fileno())
 
 
 def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
@@ -73,6 +88,53 @@ def iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
             except json.JSONDecodeError:
                 LOGGER.warning("Skipping malformed JSONL line %s in %s", line_no, path.as_posix())
     return iter(rows)
+
+
+def upsert_jsonl_records(path: Path, key_field: str, records: Iterable[Dict[str, Any]]) -> int:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    incoming = list(records)
+    if not incoming:
+        return 0
+
+    with jsonl_file_lock(path):
+        existing_by_key: dict[str, Dict[str, Any]] = {}
+        if path.exists() and path.stat().st_size > 0:
+            with path.open("r", encoding="utf-8", errors="ignore") as fp:
+                for line_no, line in enumerate(fp, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        LOGGER.warning("Skipping malformed JSONL line %s in %s", line_no, path.as_posix())
+                        continue
+                    key = str(record.get(key_field) or "").strip()
+                    if key:
+                        existing_by_key[key] = record
+
+        upserted = 0
+        for record in incoming:
+            key = str(record.get(key_field) or "").strip()
+            if not key:
+                continue
+            existing_by_key[key] = record
+            upserted += 1
+
+        fd, tmp_path = tempfile.mkstemp(prefix=path.stem + "_", suffix=".jsonl.tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+                for record in existing_by_key.values():
+                    fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+                fp.flush()
+                os.fsync(fp.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    return upserted
 
 
 def load_existing_ids_from_jsonl(path: Path, id_field: str) -> set[str]:

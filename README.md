@@ -1,49 +1,68 @@
-# PaGos Parser
+# PaGos Parser: Полный Пайплайн (RU)
 
-Парсерный пайплайн для законопроектов Государственной Думы:
-- `stage1`: сбор ссылок на карточки законопроектов
-- `stage2`: сбор ссылок на входные/выходные документы
-- `stage3`: скачивание документов и извлечение текстов в `JSONL`
-- `stage4`: расчёт эмбеддингов и формирование `final_result.xlsx`
+Проект собирает документы по законопроектам Госдумы, извлекает тексты входной и итоговой редакции, считает semantic score и формирует итоговый Excel.
 
-Репозиторий чистый:
-- без скачанных документов
-- без сгенерированных артефактов
-- без Telegram-скрипта и токенов
+## Зачем нужен пайплайн
 
-## Требования
+- Данные на сайте неоднородные: PDF, DOCX, legacy DOC, RTF, иногда архивы и битые файлы.
+- Нужен воспроизводимый и устойчивый процесс, который не теряет строки и умеет восстанавливаться после сбоев.
+- На выходе нужен компактный файл для анализа: сравнение `text_a` и `text_b` + `score`.
 
-- Python 3.11+ (проверено на Windows)
-- Установленный Microsoft Word (для извлечения текста из legacy `.doc` в `stage3`)
+## Архитектура по стадиям
 
-Установка зависимостей:
+1. `stage1`:
+   - Сбор ссылок на карточки законопроектов.
+   - Результат: `artifacts/urls.csv`.
+
+2. `stage2`:
+   - Обход карточек и сбор ссылок на входной/выходной документы.
+   - Результат: `artifacts/documents.csv`.
+
+3. `stage3`:
+   - Скачивание файлов и извлечение текста.
+   - Поддержка: `pdf/docx/doc/rtf/изображения`.
+   - OCR для сложных случаев (Tesseract + Poppler/Fitz fallback).
+   - Last-resort извлечение из бинарника, чтобы не терять текст полностью.
+   - Результат: `artifacts/texts.jsonl`.
+
+4. `stage4`:
+   - Reconciliation по `documents.csv` (left join по всем `bill_id`).
+   - Дозагрузка/довосстановление пропусков текста на лету.
+   - Расчет эмбеддингов и `score`.
+   - Форматированный Excel (freeze panes, header style, widths, autofilter).
+   - Результат: `artifacts/final_result.xlsx`.
+
+## Почему это работает надежно
+
+- Потокобезопасная запись `texts.jsonl` через `filelock`.
+- Инкрементное сохранение прогресса в `stage3` по каждой стороне (`a`/`b`) для защиты от потерь при краше.
+- Нормализация JSONL и защита от битых строк.
+- Жесткие маркеры причин ошибок вместо `null`.
+- Reconciliation в `stage4`: итоговая таблица строится от `documents.csv`, поэтому строки не пропадают.
+
+## Технические зависимости
+
+Установить Python-зависимости:
 
 ```bash
 pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-## Быстрый старт
+Для OCR на Windows:
 
-Полный запуск (рекомендуется):
+- Tesseract OCR (желательно с `rus` и `eng` языками).
+- Poppler (для `pdf2image`, если доступен; есть fallback через Fitz).
 
-```bash
-python run_pipeline.py --mode full
-```
+## Запуск
 
-Возобновление только `stage3 + stage4` через супервизор:
-
-```bash
-python run_pipeline.py --mode stage34
-```
-
-Прямой запуск `stage3 + stage4` (без супервизора):
+Полный запуск:
 
 ```bash
-python run_pipeline.py --mode stage34 --direct-stage34
+python -m gd_pipeline.cli all --output-dir artifacts --workers 18
 ```
 
-## Запуск по стадиям (CLI)
+По стадиям:
 
 ```bash
 python -m gd_pipeline.cli stage1 --output-dir artifacts --start-page 1 --end-page 24
@@ -52,29 +71,27 @@ python -m gd_pipeline.cli stage3 --output-dir artifacts
 python -m gd_pipeline.cli stage4 --output-dir artifacts
 ```
 
-Запуск всего пайплайна одной командой:
+Через обертку:
 
 ```bash
-python -m gd_pipeline.cli all --output-dir artifacts --workers 18
+python run_pipeline.py --mode full
+python run_pipeline.py --mode stage34
+python run_pipeline.py --mode stage34 --direct-stage34
 ```
 
-## Артефакты
+## Что лежит в репозитории
 
-Пайплайн создаёт:
-- `artifacts/urls.csv`
-- `artifacts/documents.csv`
-- `artifacts/texts.jsonl`
-- `artifacts/final_result.xlsx`
-- `artifacts/state/stage1_state.json`
-- `artifacts/logs/*.log`
+- Исходный код пайплайна.
+- Конечный Excel-результат этого прогона:
+  - `deliverables/final_result.xlsx`
 
-## Надёжность
+Рантайм-артефакты и скачанные массивы по умолчанию не коммитятся (`.gitignore`).
 
-- `stage3` поддерживает возобновление и использует блокировки файлов/процессов.
-- `stage34_supervisor.py` предотвращает параллельный запуск нескольких супервизоров и перезапускает зависший `stage3`.
-- `stage4` очищает недопустимые для Excel управляющие символы перед экспортом.
+## Ключевые файлы
 
-## Безопасность
+- `gd_pipeline/cli.py`: единая CLI-точка входа.
+- `gd_pipeline/stage3_extract_texts.py`: скачивание, парсинг, OCR, fallback.
+- `gd_pipeline/stage4_embeddings.py`: reconciliation, scoring, Excel.
+- `gd_pipeline/io_utils.py`: атомарные I/O операции и блокировки.
+- `stage34_supervisor.py`: контроль и перезапуск stage3/stage4.
 
-- В репозитории намеренно отсутствуют Telegram-автоматизация и учётные данные.
-- `.gitignore` исключает runtime-артефакты, кэши и скачанные файлы.
