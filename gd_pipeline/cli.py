@@ -44,6 +44,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser_stage4 = subparsers.add_parser("stage4", help="Compute embeddings and cosine distance into Excel")
     add_common_args(parser_stage4)
 
+    parser_stage5 = subparsers.add_parser("stage5", help="Enrich final_result.xlsx with bill card metadata")
+    add_common_args(parser_stage5)
+    parser_stage5.add_argument("--input", type=Path, default=None, help="Input XLSX (default: <output-dir>/final_result.xlsx)")
+    parser_stage5.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output XLSX (default: <output-dir>/final_result_enriched.xlsx)",
+    )
+    parser_stage5.add_argument("--min-delay", type=float, default=0.5)
+    parser_stage5.add_argument("--max-delay", type=float, default=1.0)
+    parser_stage5.add_argument("--timeout", type=int, default=30)
+    parser_stage5.add_argument("--retries", type=int, default=3)
+    parser_stage5.add_argument("--max-workers", type=int, default=5)
+
     parser_clean_texts = subparsers.add_parser(
         "clean-texts",
         help="Remove poisoned text payloads from texts.jsonl so stage3 can rebuild them",
@@ -62,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser_all.add_argument("--http-timeout-seconds", type=int, default=90)
     parser_all.add_argument("--http-retries", type=int, default=3)
     parser_all.add_argument("--warm-bill-pages", action="store_true")
+    parser_all.add_argument("--stage5-min-delay", type=float, default=0.5)
+    parser_all.add_argument("--stage5-max-delay", type=float, default=1.0)
+    parser_all.add_argument("--stage5-timeout", type=int, default=30)
+    parser_all.add_argument("--stage5-retries", type=int, default=3)
+    parser_all.add_argument("--stage5-max-workers", type=int, default=5)
 
     return parser
 
@@ -126,6 +146,24 @@ def main() -> None:
         Stage4EmbeddingScorer(config).run()
         return
 
+    if args.command == "stage5":
+        Stage5Config = _safe_import("stage5_metadata", "Stage5Config")
+        run_stage5 = _safe_import("stage5_metadata", "run_stage5")
+
+        input_xlsx = args.input or config.final_result_xlsx
+        output_xlsx = args.output or (config.output_dir / "final_result_enriched.xlsx")
+        stage5_cfg = Stage5Config(
+            input_xlsx=input_xlsx,
+            output_xlsx=output_xlsx,
+            min_delay_seconds=float(args.min_delay),
+            max_delay_seconds=float(args.max_delay),
+            timeout_seconds=max(5, int(args.timeout)),
+            retries=max(1, int(args.retries)),
+            max_workers=max(1, int(args.max_workers)),
+        )
+        run_stage5(config=stage5_cfg)
+        return
+
     if args.command == "clean-texts":
         clean_texts_jsonl_file = _safe_import("gd_pipeline.clean_texts_jsonl", "clean_texts_jsonl_file")
         stats = clean_texts_jsonl_file(path=config.texts_jsonl, make_backup=not bool(args.no_backup))
@@ -149,6 +187,8 @@ def main() -> None:
         )
         Stage3TextExtractor = _safe_import("gd_pipeline.stage3_extract_texts", "Stage3TextExtractor")
         Stage4EmbeddingScorer = _safe_import("gd_pipeline.stage4_embeddings", "Stage4EmbeddingScorer")
+        Stage5Config = _safe_import("stage5_metadata", "Stage5Config")
+        run_stage5 = _safe_import("stage5_metadata", "run_stage5")
 
         LOGGER.info("Running all stages...")
         Stage1URLCollector(config).run()
@@ -157,6 +197,16 @@ def main() -> None:
         extractor = Stage3TextExtractor(config)
         asyncio.run(extractor.run())
         Stage4EmbeddingScorer(config).run()
+        stage5_cfg = Stage5Config(
+            input_xlsx=config.final_result_xlsx,
+            output_xlsx=config.output_dir / "final_result_enriched.xlsx",
+            min_delay_seconds=float(args.stage5_min_delay),
+            max_delay_seconds=float(args.stage5_max_delay),
+            timeout_seconds=max(5, int(args.stage5_timeout)),
+            retries=max(1, int(args.stage5_retries)),
+            max_workers=max(1, int(args.stage5_max_workers)),
+        )
+        run_stage5(config=stage5_cfg)
         LOGGER.info("All stages completed.")
         return
 

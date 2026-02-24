@@ -11,9 +11,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pipeline runner for the State Duma parser.")
     parser.add_argument(
         "--mode",
-        choices=["full", "stage34", "stage3", "stage4"],
+        choices=["full", "stage34", "stage3", "stage4", "stage5"],
         default="full",
-        help="full=stage1+stage2+stage3+stage4; stage34=supervised stage3+stage4 only.",
+        help="full=stage1+stage2+stage3+stage4+stage5; stage34=supervised stage3+stage4 only.",
     )
     parser.add_argument("--output-dir", default="artifacts", help="Artifacts directory for gd_pipeline.cli")
     parser.add_argument("--start-page", type=int, default=1, help="Stage1 start page")
@@ -100,9 +100,15 @@ def main() -> int:
             rc = run_command(cli_cmd("stage3", "--output-dir", args.output_dir), log_path)
             if rc != 0:
                 return rc
-            return run_command(cli_cmd("stage4", "--output-dir", args.output_dir), log_path)
+            rc = run_command(cli_cmd("stage4", "--output-dir", args.output_dir), log_path)
+            if rc != 0:
+                return rc
+            return run_command(cli_cmd("stage5", "--output-dir", args.output_dir), log_path)
 
-        return run_stage34_supervisor()
+        rc = run_stage34_supervisor()
+        if rc != 0:
+            return rc
+        return run_command(cli_cmd("stage5", "--output-dir", args.output_dir), log_path)
 
     if args.mode == "stage34":
         if args.direct_stage34:
@@ -117,6 +123,9 @@ def main() -> int:
 
     if args.mode == "stage4":
         return run_command(cli_cmd("stage4", "--output-dir", args.output_dir), log_path)
+
+    if args.mode == "stage5":
+        return run_command(cli_cmd("stage5", "--output-dir", args.output_dir), log_path)
 
     return 1
 
